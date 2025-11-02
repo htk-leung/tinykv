@@ -21,7 +21,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
-var (
+var ( // LHT: custom options
 	schedulerAddr = flag.String("scheduler", "", "scheduler address")
 	storeAddr     = flag.String("addr", "", "store address")
 	dbPath        = flag.String("path", "", "directory path of db")
