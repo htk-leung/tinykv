@@ -32,10 +32,16 @@ func NewStandAloneStorage(conf *config.Config) *StandAloneStorage {
 
 func (s *StandAloneStorage) Start() error {
 	// Your Code Here (1).
-
-	var err error
+	opts := badger.DefaultOptions
+	opts.Dir = s.conf.DBPath
+	opts.ValueDir = s.conf.DBPath
+	if err := os.MkdirAll(opts.Dir, os.ModePerm); err != nil {
+		log.Fatal(err)
+	}
+	
 	// function Open() initializes variables and allocates space for db if path does exist yet, or open existing db if it does
-	s.db, err = badger.Open(s.conf)
+	var err error
+	s.db, err = badger.Open(opts)
 	return err
 }
 
