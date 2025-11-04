@@ -6,6 +6,7 @@ import (
 	"github.com/pingcap-incubator/tinykv/proto/pkg/kvrpcpb"
 	"github.com/Connor1996/badger" // revised badger version used by TinyKV
 	"github.com/pingcap-incubator/tinykv/kv/util/engine_util" // functions to define engine
+	"os"
 )
 
 // questions
@@ -35,8 +36,9 @@ func (s *StandAloneStorage) Start() error {
 	opts := badger.DefaultOptions
 	opts.Dir = s.conf.DBPath
 	opts.ValueDir = s.conf.DBPath
+
 	if err := os.MkdirAll(opts.Dir, os.ModePerm); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	
 	// function Open() initializes variables and allocates space for db if path does exist yet, or open existing db if it does
@@ -56,10 +58,10 @@ func (s *StandAloneStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader,
 	// Your Code Here (1).
 
 	txn := s.db.NewTransaction(false)
-	return TxnStorageReader{txn}, nil
+	return &StandAloneReader{txn}, nil
 }
 
-type TxnStorageReader struct {
+type StandAloneReader struct {
 	txn *badger.Txn
 }
 
@@ -73,7 +75,7 @@ func (r *StandAloneReader) GetCF(cf string, key []byte) ([]byte, error) {
 }
 
 func (r *StandAloneReader) IterCF(cf string) engine_util.DBIterator {
-	return NewCFIterator(cf, r.txn)
+	return engine_util.NewCFIterator(cf, r.txn)
 }
 
 func (r *StandAloneReader) Close() {
@@ -101,7 +103,7 @@ func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) 
 			// how to define error?
 		// }
     }
-	if err := wb.MustWriteToDB(s.db); err != nil {
+	if err := wb.WriteToDB(s.db); err != nil {
 		return err
 	}
 	return nil
