@@ -18,9 +18,9 @@ import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 
 // RaftLog manage the log entries, its struct look like:
 //
-//  snapshot/first.....applied....committed....stabled.....last
-//  --------|------------------------------------------------|
-//                            log entries
+//	snapshot/first.....applied....committed....stabled.....last
+//	--------|------------------------------------------------|
+//	                          log entries
 //
 // for simplify the RaftLog implement should manage all log entries
 // that not truncated
@@ -51,6 +51,18 @@ type RaftLog struct {
 
 	// Your Data Here (2A).
 }
+
+/*
+	Log replication
+	To implement log replication, you may want to start with
+
+	- handling MsgAppend and MsgAppendResponse on both the sender and receiver sides.
+	- Checkout raft.RaftLog in raft/log.go which is a helper struct that helps you manage the raft log,
+	  in here you also need to interact with the upper application by the Storage interface defined in raft/storage.go
+	to get the persisted data like log entries and snapshot.
+
+	You can run make project2ab to test the implementation and see some hints at the end of this part.
+*/
 
 // newLog returns log using the given storage. It recovers the log
 // to the state that it just commits and applies the latest snapshot.
