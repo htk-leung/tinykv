@@ -166,18 +166,16 @@ func newRaft(c *Config) *Raft {
 		panic(err.Error())
 	}
 
-
 	// Your Code Here (2A).
-
 	return &Raft{
-		id: c.ID,
+		id: 				c.ID,
 		RaftLog: &RaftLog{
-			storage: c.Storage,
-			applied: c.Applied,
+			storage: 		c.Storage,
+			applied: 		c.Applied,
 		},
-		State:            StateFollower,
-		heartbeatTimeout: c.HeartbeatTick,
-		electionTimeout:  c.ElectionTick,
+		State:            	StateFollower,
+		heartbeatTimeout: 	c.HeartbeatTick,
+		electionTimeout:  	c.ElectionTick,
 	}
 }
 
@@ -190,13 +188,14 @@ func (r *Raft) sendAppend(to uint64) bool {
 	If you need to send out a message, just push it to raft.Raft.msgs and
 	all messages the raft received will be passed to raft.Raft.Step()
 	*/
-	if to != r.Lead {
+	// only called by leader
+	if to == r.Lead {
 		return false
 	}
 
-	if r.RaftLog.committed > r.RaftLog.applied {
-		entriesptrs := make([]*pb.Entry, r.RaftLog.committed - r.RaftLog.applied)
-		for _, entry := range r.RaftLog.entries[r.RaftLog.applied+1 : ] {
+	if r.RaftLog.committed > r.Prs[m.From].Next {
+		entriesptrs := make([]*pb.Entry, r.RaftLog.committed - r.Prs[m.From].Match)
+		for _, entry := range r.RaftLog.entries[r.Prs[m.From].Next : ] {
 			entriesptrs = append(entriesptrs, &entry)
 		}
 
@@ -205,10 +204,10 @@ func (r *Raft) sendAppend(to uint64) bool {
 			To:      	to,
 			From:    	r.id,
 			Term:    	r.Term,
-			LogTerm: 	r.RaftLog.entries[r.RaftLog.applied].Term, // prevLogTerm - term of prevLogIndex entry
-			Index:   	r.RaftLog.applied,                         // prevLogIndex - index of log entry immediately preceding new ones
+			LogTerm: 	r.RaftLog.entries[r.Prs[m.From].Match].Term, // prevLogTerm - term of prevLogIndex entry
+			Index:   	r.Prs[m.From].Match,                         // prevLogIndex - index of log entry immediately preceding new ones
 			Entries: 	entriesptrs,
-			Commit:  	r.RaftLog.committed, // committed must be updated before calling sendappend
+			Commit:  	r.RaftLog.committed,
 		})
 	} else {
 		r.msgs = append(r.msgs, pb.Message{
@@ -280,17 +279,6 @@ func (r *Raft) becomeCandidate() {
 	r.votes[r.id] = true
 	// reset electionTimeout
 	r.electionElapsed = 0
-	// issues RequestVote RPCs in parallel to each of the other servers in the cluster.
-	for p := range r.Prs {
-		r.msgs = append(r.msgs, pb.Message{
-			MsgType: pb.MessageType_MsgRequestVote,
-			To:      p,
-			From:    r.id,
-			Term:    r.Term,
-			LogTerm: r.RaftLog.entries[r.RaftLog.committed].Term,
-			Index:   r.RaftLog.applied, // should this be committed or applied?
-		})
-	}
 }
 
 // becomeLeader transform this peer's state to leader
@@ -312,7 +300,7 @@ func (r *Raft) becomeLeader() {
 		Term:      r.Term,
 		Index:     0,
 	})
-	r.appendEntries(entries)
+	r.lAppendEntries(entries)
 
 	// broadcast
 	r.bcastAppend()
@@ -492,8 +480,10 @@ func (r *Raft) Step(m pb.Message) error {
 		case pb.MessageType_MsgSnapshot:
 		// 'MessageType_MsgHeartbeat' >> AppendEntries RPC
 		case pb.MessageType_MsgHeartbeat:
+			r.handleHeartbeat(m)
 		// 'MessageType_MsgHeartbeatResponse' >> AppendEntries RPC
 		case pb.MessageType_MsgHeartbeatResponse:
+			r.handleHeartbeatResponse(m)
 		// 'MessageType_MsgTransferLeader' requests the leader to transfer its leadership.
 		case pb.MessageType_MsgTransferLeader:
 		// 'MessageType_MsgTimeoutNow' send from the leader to the leadership transfer target, to let
@@ -679,17 +669,25 @@ func (r *Raft) handleRequestVoteResponse(m pb.Message) {
 	}
 	// else do nothing
 }
-func (r *Raft) appendEntries(entries []*pb.Entry) {
+func (r *Raft) lAppendEntries(entries []*pb.Entry) {
 	// append
 	for _, entry := range entries {
 		r.RaftLog.entries = append(r.RaftLog.entries, *entry)
-		r.RaftLog.committed++
+		r.RaftLog.applied++
 	}
-	// anything else to update?
+	// when to update committed and stabled????
+}
+func (r *Raft) fAppendEntries(entries []*pb.Entry) {
+	// append
+	for _, entry := range entries {
+		r.RaftLog.entries = append(r.RaftLog.entries, *entry)
+		// r.RaftLog.applied++
+	}
+	// when to update applied committed and stabled????
 }
 
 // broadcast append
-func (r *Raft) bcastAppend() {
+func (r *Raft) bcastAppend(m pb.Message) {
 	/*
 		'MessageType_MsgPropose' proposes to append data to its log entries. This is a special
 		type to redirect proposals to the leader. Therefore, send method overwrites
@@ -734,8 +732,14 @@ func (r *Raft) bcastAppend() {
 		>> assumes entries already in r.RaftLog.entries
 	*/
 
+	if r.Lead != r.id {
+		return
+	}
+
 	for p := range r.Prs {
-		r.sendAppend(p)
+		if p != m.From {
+			r.sendAppend(p)
+		}
 	}
 }
 
@@ -787,9 +791,9 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 			Reject:  	true,
 		})
 		return
-	} else if m.Term >= r.Term && (r.State == StateLeader || r.State == StateCandidate) { 
+	} else if m.Term >= r.Term && r.State == StateCandidate { 
 		r.becomeFollower(m.Term, m.From)
-	} else if m.Term > r.Term && r.State == StateFollower {
+	} else if m.Term > r.Term && (r.State == StateFollower || r.State == StateLeader) {
 		// update term for follower only when term has changed
 		r.becomeFollower(m.Term, m.From)
 	}
@@ -872,6 +876,7 @@ func (r *Raft) handleAppendEntriesResponse(m pb.Message) {
 		// if rejected decrement nextIndex and retry
 		// this means that the reply needs to carry the same entries as the request? Only if rejected? No because leader has raw info.
 		// details to be carried out in sendAppend
+		r.Prs[m.From].Next = m.Index - 1
 		r.sendAppend(m.From)
 	}
 }
@@ -916,8 +921,8 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 		r.becomeFollower(m.Term, m.From)
 	}
 
-	// reset election timeout
-	r.electionElapsed = 0
+	// reset heartbeat timeout
+	r.heartbeatElapsed = 0
 
 	// return
 	r.msgs = append(r.msgs, pb.Message{
@@ -926,6 +931,11 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 		From:    m.To,
 		Term:    r.Term,
 	})
+}
+
+func (r *Raft) handleHeartbeatResponse(m pb.Message) {
+
+
 }
 
 // handleSnapshot handle Snapshot RPC request
