@@ -1,16 +1,16 @@
-// Copyright 2015 The etcd Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// // Copyright 2015 The etcd Authors
+// //
+// // Licensed under the Apache License, Version 2.0 (the "License");
+// // you may not use this file except in compliance with the License.
+// // You may obtain a copy of the License at
+// //
+// //     http://www.apache.org/licenses/LICENSE-2.0
+// //
+// // Unless required by applicable law or agreed to in writing, software
+// // distributed under the License is distributed on an "AS IS" BASIS,
+// // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// // See the License for the specific language governing permissions and
+// // limitations under the License.
 
 package raft
 
@@ -193,9 +193,9 @@ func (r *Raft) sendAppend(to uint64) bool {
 		return false
 	}
 
-	if r.RaftLog.committed > r.Prs[m.From].Next {
-		entriesptrs := make([]*pb.Entry, r.RaftLog.committed - r.Prs[m.From].Match)
-		for _, entry := range r.RaftLog.entries[r.Prs[m.From].Next : ] {
+	if r.RaftLog.committed > r.Prs[to].Next {
+		entriesptrs := make([]*pb.Entry, r.RaftLog.committed - r.Prs[to].Match)
+		for _, entry := range r.RaftLog.entries[r.Prs[to].Next : ] {
 			entriesptrs = append(entriesptrs, &entry)
 		}
 
@@ -204,8 +204,8 @@ func (r *Raft) sendAppend(to uint64) bool {
 			To:      	to,
 			From:    	r.id,
 			Term:    	r.Term,
-			LogTerm: 	r.RaftLog.entries[r.Prs[m.From].Match].Term, // prevLogTerm - term of prevLogIndex entry
-			Index:   	r.Prs[m.From].Match,                         // prevLogIndex - index of log entry immediately preceding new ones
+			LogTerm: 	r.RaftLog.entries[r.Prs[to].Match].Term, // prevLogTerm - term of prevLogIndex entry
+			Index:   	r.Prs[to].Match,                         // prevLogIndex - index of log entry immediately preceding new ones
 			Entries: 	entriesptrs,
 			Commit:  	r.RaftLog.committed,
 		})
@@ -301,6 +301,8 @@ func (r *Raft) becomeLeader() {
 		Index:     0,
 	})
 	r.lAppendEntries(entries)
+
+	// 
 
 	// broadcast
 	r.bcastAppend()
@@ -687,7 +689,7 @@ func (r *Raft) fAppendEntries(entries []*pb.Entry) {
 }
 
 // broadcast append
-func (r *Raft) bcastAppend(m pb.Message) {
+func (r *Raft) bcastAppend() {
 	/*
 		'MessageType_MsgPropose' proposes to append data to its log entries. This is a special
 		type to redirect proposals to the leader. Therefore, send method overwrites
@@ -737,7 +739,7 @@ func (r *Raft) bcastAppend(m pb.Message) {
 	}
 
 	for p := range r.Prs {
-		if p != m.From {
+		if p != r.id {
 			r.sendAppend(p)
 		}
 	}

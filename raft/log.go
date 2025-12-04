@@ -16,7 +16,7 @@ package raft
 
 import (
 	"fmt"
-
+	"github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -54,6 +54,7 @@ type RaftLog struct {
 	pendingSnapshot *pb.Snapshot
 
 	// Your Data Here (2A).
+	lastind uint64
 }
 
 /*
@@ -120,7 +121,6 @@ func newLog(storage Storage) *RaftLog {
 		}
 	*/
 
-
 	// note stabled, committed and applied start counting from 0
 	// they don't reflect actual index value in log
 	// ref type MemoryStorage struct : ents[i] has raft log position i+snapshot.Metadata.Index
@@ -151,14 +151,14 @@ func newLog(storage Storage) *RaftLog {
 	}
 
 	return &RaftLog{
-		storage: 			storage, 												// storage contains all stable entries since the last snapshot.
-																					// refer to section "To restart a node from previous state:" in raft/doc.go
-		stabled: 			entriesLastInd - entriesStartInd, 								// persisted to storage >> ?
-		committed: 			hardstate.Commit - storage.snapshot.Metadata.Index - 1, 	// committed is the highest known log position
-		applied: 			-1, 													// highest log position applied to the rest of the servers
-		
-		entries:			entries, 											// everything? from snapshot to MemoryStorage.ents? or just ents?
-		pendingSnapshot: 	snapshot,												// (Used in 2C)
+		storage: 			storage, 			// storage contains all stable entries since the last snapshot.
+												// refer to section "To restart a node from previous state:" in raft/doc.go
+		stabled: 			entriesLastInd, 	// persisted to storage >> ?
+		committed: 			hardstate.Commit, 	// committed is the highest known log position
+		applied: 			hardstate.Commit, 	// highest log position applied to the rest of the servers
+		entries:			entries, 			// everything? from snapshot to MemoryStorage.ents? or just ents?
+		pendingSnapshot: 	&snapshot,			// (Used in 2C)
+
 	}
 }
 
@@ -180,7 +180,7 @@ func (l *RaftLog) allEntries() []pb.Entry {
 
 	// append to slice if data not empty
 	for _, entry := range l.entries {
-		if entry.data != nil {
+		if entry.Data != nil {
 			ret = append(ret, entry)
 		}
 	}
@@ -191,7 +191,7 @@ func (l *RaftLog) allEntries() []pb.Entry {
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
 
-	ret := l.entries[stabled + 1 : ]
+	ret := l.entries[l.stabled + 1 : ]
 	return ret
 }
 
@@ -199,26 +199,38 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
 
-	ret := l.entries[applied + 1 : committed + 1]
+	ret := l.entries[l.applied + 1 : l.committed + 1]
 	return ret
 }
 
 // LastIndex return the last index of the log entries
+// INCLUDING UNSTABLE ONES
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
 
-	lastI := len(l.entries)
-	return lastI + l.storage.snapshot.Metadata.Index
+	firstind, err := l.storage.FirstIndex() // (uint64, error)
+	if err != nil {
+		log.Panic("LastIndex(): FirstIndex() not available from RaftLog.storage")
+	}
+
+	entlen := len(l.entries)
+	
+	return firstind + uint64(entlen) - 1
 }
 
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
 
-	ind := i - l.storage.snapshot.Metadata.Index
-	if ind < len(l.entries) {
-		return l.entries[ind].Term, nil
+	lastind := l.LastIndex()
+	firstind, err := l.storage.FirstIndex()
+	if err != nil {
+		return 0, err
 	}
-	// what if it's < l.storage.snapshot.Metadata.Index?? how to read from []byte?
-	return 0, fmt.Errorf("invalid index")
+
+	if i >= firstind && i <= lastind {
+		return l.entries[i].Term, nil
+	}
+
+	return 0, fmt.Errorf("Term(i): Index(%d) out of bounds of entries currently available in RaftLog", i)
 }

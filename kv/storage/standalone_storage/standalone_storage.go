@@ -68,7 +68,7 @@ func (r *StandAloneReader) GetCF(cf string, key []byte) ([]byte, error) {
 
 	val, err := engine_util.GetCFFromTxn(r.txn, cf, key)
 	if err == badger.ErrKeyNotFound { // err handling ref region_reader.go
-		return nil, err
+		return nil, nil
 	}
 	return val, err
 }

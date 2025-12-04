@@ -3,7 +3,7 @@ package server
 import (
 	"context" // go package
 
-	"github.com/Connor1996/badger"
+	// "github.com/Connor1996/badger"
 	"github.com/pingcap-incubator/tinykv/kv/storage"
 	"github.com/pingcap-incubator/tinykv/proto/pkg/kvrpcpb"
 	"github.com/pingcap/errors"
@@ -30,31 +30,27 @@ func (server *Server) RawGet(_ context.Context, req *kvrpcpb.RawGetRequest) (*kv
 
 	// get vars
 	reqContext := req.GetContext()
-	if reqContext == nil {
-		return resp, ErrEmptyReqContext
-	}
+	// if reqContext == nil {
+	// 	return resp, ErrEmptyReqContext
+	// }
 	reqCF := req.GetCf()
-	if reqCF == "" {
-		return resp, ErrEmptyReqCF
-	}
 	reqKey := req.GetKey()
-	if reqKey == nil {
-		return resp, ErrEmptyReqKey
+	if reqCF == "" || reqKey == nil {
+		resp.NotFound = true
+		return resp, nil
 	}
 
 	// get reader
-	reader, err := server.storage.Reader(reqContext)
+	reader, _ := server.storage.Reader(reqContext)
 	defer reader.Close() // delay discarding txn
 
 	// get value and error
-	resp.Value, err = reader.GetCF(reqCF, reqKey)
+	resp.Value, _ = reader.GetCF(reqCF, reqKey)
 
 	// if not found set bool
-	if err == badger.ErrKeyNotFound {
-		resp.Error = err.Error()
+	if resp.Value == nil {
 		resp.NotFound = true
 	}
-
 	return resp, nil
 }
 
@@ -67,9 +63,9 @@ func (server *Server) RawPut(_ context.Context, req *kvrpcpb.RawPutRequest) (*kv
 
 	// get vars
 	reqContext := req.GetContext()
-	if reqContext == nil {
-		return resp, ErrEmptyReqContext
-	}
+	// if reqContext == nil {
+	// 	return resp, ErrEmptyReqContext
+	// }
 	reqCF := req.GetCf()
 	if reqCF == "" {
 		return resp, ErrEmptyReqCF
@@ -121,9 +117,9 @@ func (server *Server) RawDelete(_ context.Context, req *kvrpcpb.RawDeleteRequest
 
 	// get vars
 	reqContext := req.GetContext()
-	if reqContext == nil {
-		return resp, ErrEmptyReqContext
-	}
+	// if reqContext == nil {
+	// 	return resp, ErrEmptyReqContext
+	// }
 	reqCF := req.GetCf()
 	if reqCF == "" {
 		return resp, ErrEmptyReqCF
@@ -170,20 +166,24 @@ func (server *Server) RawScan(_ context.Context, req *kvrpcpb.RawScanRequest) (*
 
 	// get vars
 	reqContext := req.GetContext()
-	if reqContext == nil {
-		return resp, ErrEmptyReqContext
-	}
+	// if reqContext == nil {
+	// 	resp.Error = ErrEmptyReqContext.Error()
+	// 	return resp, nil
+	// }
 	reqSK := req.GetStartKey()
 	if reqSK == nil {
-		return resp, ErrEmptyReqStartKey
+		resp.Error = ErrEmptyReqStartKey.Error()
+		return resp, nil
 	}
 	reqLimit := req.GetLimit()
 	if reqLimit == 0 {
-		return resp, ErrEmptyReqLimit
+		resp.Error = ErrEmptyReqLimit.Error()
+		return resp, nil
 	}
 	reqCF := req.GetCf()
 	if reqCF == "" {
-		return resp, ErrEmptyReqCF
+		resp.Error = ErrEmptyReqCF.Error()
+		return resp, nil
 	}
 
 	// get reader
@@ -198,11 +198,7 @@ func (server *Server) RawScan(_ context.Context, req *kvrpcpb.RawScanRequest) (*
 	pairs := make([]*kvrpcpb.KvPair, 0, reqLimit)
 	it.Seek(reqSK)
 
-	for i := uint32(0); i < reqLimit; i++ {
-		// it.Next()
-		// if !it.Valid() {
-		// 	break
-		// }
+	for i := uint32(0); i < reqLimit && it.Valid(); i++ {
 
 		item := it.Item()
 		val, _ := item.ValueCopy(nil)
