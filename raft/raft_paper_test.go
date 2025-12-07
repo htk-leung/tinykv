@@ -386,10 +386,10 @@ func TestLeaderStartReplication2AB(t *testing.T) {
 		{From: 1, To: 3, Term: 1, MsgType: pb.MessageType_MsgAppend, Index: li, LogTerm: 1, Entries: []*pb.Entry{&ent}, Commit: li},
 	}
 	if !reflect.DeepEqual(msgs, wmsgs) {
-		t.Errorf("msgs = %+v, want %+v", msgs, wmsgs)
+		t.Errorf("\n\tmsgs = %+v, \n\twant %+v", msgs, wmsgs)
 	}
 	if g := r.RaftLog.unstableEntries(); !reflect.DeepEqual(g, wents) {
-		t.Errorf("ents = %+v, want %+v", g, wents)
+		t.Errorf("\n\tents = %+v, \n\twant %+v", g, wents)
 	}
 }
 
@@ -503,7 +503,7 @@ func TestLeaderCommitPrecedingEntries2AB(t *testing.T) {
 		li := uint64(len(tt))
 		wents := append(tt, pb.Entry{Term: 3, Index: li + 1}, pb.Entry{Term: 3, Index: li + 2, Data: []byte("some data")})
 		if g := r.RaftLog.nextEnts(); !reflect.DeepEqual(g, wents) {
-			t.Errorf("#%d: ents = %+v, want %+v", i, g, wents)
+			t.Errorf("#%d: ents = %+v, \n\twant %+v", i, g, wents)
 		}
 	}
 }

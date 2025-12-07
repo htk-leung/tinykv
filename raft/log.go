@@ -16,7 +16,7 @@ package raft
 
 import (
 	"fmt"
-	"github.com/pingcap-incubator/tinykv/log"
+	// "github.com/pingcap-incubator/tinykv/log"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -76,36 +76,40 @@ func newLog(storage Storage) *RaftLog {
 
 	// note stabled, committed and applied DON'T start counting from 0
 	// they reflect actual index value in log
-	// ref type MemoryStorage struct : ents[i] has raft log position i+snapshot.Metadata.Index
+	// but ents[i] has raft log position i+snapshot.Metadata.Index (ref type MemoryStorage struct)
 
 	hardstate, _, err := storage.InitialState()
 	if err != nil {
 		panic(err.Error())
 	}
 
-	entriesStartInd, err := storage.FirstIndex()
+	firstIndex, err := storage.FirstIndex()
 	if err != nil {
 		panic(err.Error())
 	}
 
-	entriesLastInd, err := storage.LastIndex()
+	lastIndex, err := storage.LastIndex()
 	if err != nil {
 		panic(err.Error())
 	}
 	// entries never returns the dummy entry
 	// entriesLastInd + 1 because ents[hi] is excluded from slice being returned
-	entries, err := storage.Entries(entriesStartInd, entriesLastInd + 1) 
-	if err != nil {
-		panic(err.Error())
-	}
-	if len(entries) == 0 {
-		entries = []pb.Entry{{Term: 0, Index: 0}}
-	}
+	// only fetch entries if there are any
+	var entries []pb.Entry
+    if firstIndex <= lastIndex {
+        entries, err = storage.Entries(firstIndex-1, lastIndex+1)
+        if err != nil {
+            panic(err.Error())
+        }
+    } else {
+        entries = []pb.Entry{{Term: 0, Index: 0}}
+    }
+
 
 	return &RaftLog{
 		storage: 			storage, 			// storage contains all stable entries since the last snapshot.
 												// refer to section "To restart a node from previous state:" in raft/doc.go
-		stabled: 			entriesLastInd, 	// index of last entry that exists in storage
+		stabled: 			lastIndex, 			// index of last entry that exists in storage
 		committed: 			hardstate.Commit, 	// index of last entry replicated to a quorum of peers
 		applied: 			0, 					// index of last entry applied locally, not available here, but available in config, needs to be applied when calling newRaft
 		entries:			entries, 			// all entries retrieved from storage
@@ -149,8 +153,8 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	// Your Code Here (2A).
-
-	ret := l.entries[l.applied + 1 : l.committed + 1]
+	offset := l.entries[0].Index
+	ret := l.entries[l.applied-offset+1 : l.committed-offset+1]
 	return ret
 }
 
@@ -159,14 +163,7 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 func (l *RaftLog) LastIndex() uint64 {
 	// Your Code Here (2A).
 
-	firstind, err := l.storage.FirstIndex() // (uint64, error)
-	if err != nil {
-		log.Panic("LastIndex(): FirstIndex() not available from RaftLog.storage")
-	}
-
-	entlen := len(l.entries)
-	
-	return firstind + uint64(entlen) - 1
+	return l.entries[0].Index + uint64(len(l.entries)) - 1
 }
 
 // Term return the term of the entry in the given index

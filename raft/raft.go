@@ -18,7 +18,7 @@ import (
 	"errors"
 	"bytes"
 	"math"
-	// "fmt"
+	"fmt"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -165,6 +165,8 @@ type Raft struct {
 // newRaft return a raft peer with the given config
 // V
 func newRaft(c *Config) *Raft {
+	// DUMMY PRINT
+	fmt.Printf("")
 	if err := c.validate(); err != nil {
 		panic(err.Error())
 	}
@@ -363,17 +365,16 @@ func (r *Raft) Step(m pb.Message) error {
 	case pb.MessageType_MsgPropose:
 		switch r.State { // case if statemachine in this state receives this type of msg
 		case StateFollower:
-			// normally recevied by leader
-			// if a follower receives it maybe some server is mistaken
-			// save to msgs to be forwarded to leader later
+			// if a follower receives it save to msgs to be forwarded to leader later
 			m.From = r.id
 			m.To = r.Lead
 			r.msgs = append(r.msgs, m)
 		case StateCandidate:
+			// When passed to candidate, 'MessageType_MsgPropose' is dropped.
 		case StateLeader:
 			// calls appendEntry to append to entries
 			// calls bcastAppend to call sendAppend
-			r.handleAppendEntries(m)
+			r.handlePropose(m)
 		}
 
 	// 'MessageType_MsgAppend' >> AppendEntries RPC
@@ -503,6 +504,7 @@ func (r *Raft) campaign(m pb.Message) {
 	// node becomes candidate
 	r.becomeCandidate()
 	// sends 'MessageType_MsgRequestVote' to peers
+	lastInd := r.RaftLog.LastIndex() - r.RaftLog.entries[0].Index
 	for p := range r.Prs {
 		if p != r.id {			
 			r.msgs = append(r.msgs, pb.Message{
@@ -510,8 +512,8 @@ func (r *Raft) campaign(m pb.Message) {
 				To:      p,
 				From:    r.id,
 				Term:    r.Term,
-				LogTerm: r.RaftLog.entries[r.RaftLog.committed].Term, // term of candidate’s last log entry (§5.4)
-				Index:   r.RaftLog.committed,                         // index of candidate’s last log entry (§5.4)
+				LogTerm: r.RaftLog.entries[lastInd].Term, 		// term of candidate’s last log entry (§5.4)
+				Index:   r.RaftLog.entries[lastInd].Index,      // index of candidate’s last log entry (§5.4)
 			})
 		}
 	}
@@ -591,7 +593,7 @@ func (r *Raft) fHandleRequestVote(m pb.Message) {
 	var candUpToDate bool
 
 	// if different last term, later term is more up to date
-	localLogInd := r.RaftLog.committed
+	localLogInd := r.RaftLog.LastIndex()
 	if m.LogTerm != r.RaftLog.entries[localLogInd].Term {
 		candUpToDate = m.LogTerm > r.RaftLog.entries[localLogInd].Term
 
@@ -664,6 +666,10 @@ func (r *Raft) AppendEntries(entries []*pb.Entry) {
 	for _, entry := range entries {
 		r.RaftLog.entries = append(r.RaftLog.entries, *entry)
 		// r.RaftLog.applied++
+	}
+	if len(r.Prs) == 1 {
+		r.RaftLog.committed += uint64(len(entries))
+		// commit and apply
 	}
 	// persisting to memory is in the ready() part of raft, not here
 	// // save to storage
@@ -747,19 +753,15 @@ func (r *Raft) sendAppend(to uint64) bool {
 		return false
 	}
 
-	// fmt.Printf("committed = %d, match = %d\n", r.RaftLog.committed, r.Prs[to].Match)
-
 	firstInd, _ := r.RaftLog.storage.FirstIndex()
 	offset :=  firstInd - 1
 	prevLogEntry := r.RaftLog.entries[r.Prs[to].Match-offset]
 
 	if uint64(len(r.RaftLog.entries)) + offset > r.Prs[to].Match { // if there are things to send
-		
 		entriesptrs := make([]*pb.Entry, 0)
 		for _, entry := range r.RaftLog.entries[r.Prs[to].Next : ] {
 			entriesptrs = append(entriesptrs, &entry)
 		}
-
 		r.msgs = append(r.msgs, pb.Message{
 			MsgType: 	pb.MessageType_MsgAppend,
 			To:      	to,
@@ -783,6 +785,39 @@ func (r *Raft) sendAppend(to uint64) bool {
 	}
 
 	return true
+}
+
+// called by leader when follower requests append local entries
+func (r *Raft) handlePropose(m pb.Message) {
+	// Your Code Here (2A).
+
+	// becomefollower if someone else has higher term
+	// then?? ignore?
+	// but who is leader?
+	if m.Term > r.Term {
+		r.becomeFollower(m.Term, m.From)
+		return
+	}
+	if r.State != StateLeader { 
+		panic("Non-leader receiving MsgPropose\n")
+	} 
+	// if there's nothing shortcut return
+	if m.Entries == nil {
+		return
+	}
+
+	// 1. assign term and index
+	eInd := r.RaftLog.LastIndex()
+	for i, entry := range m.Entries {
+		entry.Term = r.Term
+		entry.Index = eInd + uint64(i) + 1
+		// r.RaftLog.entries = append(r.RaftLog.entries, *entry)
+	}
+	// 2. appendentries
+	r.AppendEntries(m.Entries)
+	// 3. broadcast new entries
+	r.bcastAppend()
+	// 4. persist to storage?
 }
 
 // handleAppendEntries handles AppendEntries RPC request
@@ -885,6 +920,8 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 		r.RaftLog.entries = r.RaftLog.entries[:rEndInd]
 
 		// append new ones
+		// r.AppendEntries(m.Entries[mStartInd:])
+		// rLastInd = r.RaftLog.LastIndex()
 		for _, mEntry := range m.Entries[mStartInd:] {
 			r.RaftLog.entries = append(r.RaftLog.entries, *mEntry)
 			rLastInd = mEntry.Index
@@ -895,6 +932,7 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 	if m.Commit > r.RaftLog.committed {
 		r.RaftLog.committed = min(m.Commit, rLastInd)
 		// !! trigger apply if there are new entries to apply
+		// committed and apply
 	}
 
 	// done
@@ -918,15 +956,16 @@ func (r *Raft) handleAppendEntriesResponse(m pb.Message) {
 		// for each server, index of highest log entry known to be replicated on server (initialized to 0, increases monotonically)
 		r.Prs[m.From].Match = m.Index
 		// update committed
-		var currMaxMatch uint64 = math.MaxUint64
+		var count int
 		for _, progress := range r.Prs {
-			currMaxMatch = min(currMaxMatch, progress.Match)
+			if progress.Match >= m.Index {
+				count++
+			}
 		}
-		if r.RaftLog.committed < currMaxMatch {
-			r.RaftLog.committed = currMaxMatch
-			// !! apply entries! how? when?
-		} else if r.RaftLog.committed > currMaxMatch {
-			// panic("Leader committed entries before getting enough AppendEntries RPC responses to verify majority verification")
+		count++ // this is for the leader himself
+		if count >= len(r.Prs)/2 + 1 {
+			r.RaftLog.committed = m.Index
+			// commit and apply
 		}
 	} else {
 		// if rejected decrement nextIndex and retry
@@ -953,14 +992,10 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
 
 	/* 	raft/doc.go
-	'MessageType_MsgHeartbeatResponse' is a response to 'MessageType_MsgHeartbeat'. When 'MessageType_MsgHeartbeatResponse'
-	is passed to the leader's Step method, the leader knows which follower responded.
+		When 'MessageType_MsgHeartbeatResponse' is passed to the leader's Step method, 
+		the leader knows which follower responded.
 	*/
 
-	// if message is stale ignore
-	if m.Term < r.Term {
-		return
-	}
 	// if we are forwarding response message
 	if m.MsgType == pb.MessageType_MsgHeartbeatResponse {
 		m.To = r.Lead
@@ -970,10 +1005,7 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 	if m.MsgType != pb.MessageType_MsgHeartbeat {
 		return
 	}
-
 	// becomeFollower updates Term and Lead
-	// there cannot be >1 leader per term, so only update when m.Term > r.Term
-	// but candidate should become follower if heartbeat received >> but still, only when m.Term > r.Term
 	if m.Term > r.Term {
 		r.becomeFollower(m.Term, m.From)
 	}
@@ -991,7 +1023,6 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 }
 
 func (r *Raft) handleHeartbeatResponse(m pb.Message) {
-
 
 }
 
