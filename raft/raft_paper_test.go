@@ -499,12 +499,14 @@ func TestLeaderCommitPrecedingEntries2AB(t *testing.T) {
 		for _, m := range r.readMessages() {
 			r.Step(acceptAndReply(m))
 		}
-
+		
 		li := uint64(len(tt))
 		wents := append(tt, pb.Entry{Term: 3, Index: li + 1}, pb.Entry{Term: 3, Index: li + 2, Data: []byte("some data")})
+		
 		if g := r.RaftLog.nextEnts(); !reflect.DeepEqual(g, wents) {
 			t.Errorf("#%d: ents = %+v, \n\twant %+v", i, g, wents)
 		}
+		 // completed only 1 loop ok
 	}
 }
 
@@ -648,19 +650,23 @@ func TestFollowerAppendEntries2AB(t *testing.T) {
 		},
 	}
 	for i, tt := range tests {
+		// fmt.Printf("In loop %d\n", i)
 		storage := NewMemoryStorage()
+		// fmt.Printf("at A\n")
 		storage.Append([]pb.Entry{{Term: 1, Index: 1}, {Term: 2, Index: 2}})
+		// fmt.Printf("at B\n")
 		r := newTestRaft(1, []uint64{1, 2, 3}, 10, 1, storage)
+		// fmt.Printf("at C\n")
 		r.becomeFollower(2, 2)
-
+		// fmt.Printf("at D\n")
 		r.Step(pb.Message{From: 2, To: 1, MsgType: pb.MessageType_MsgAppend, Term: tt.lterm, LogTerm: tt.term, Index: tt.index, Entries: tt.ents})
-
+		// fmt.Printf("at E\n")
 		wents := make([]pb.Entry, 0, len(tt.wents))
 		for _, ent := range tt.wents {
 			wents = append(wents, *ent)
 		}
 		if g := r.RaftLog.allEntries(); !reflect.DeepEqual(g, wents) {
-			t.Errorf("#%d: ents = %+v, want %+v", i, g, wents)
+			t.Errorf("#%d: ents = %+v, \n\twant %+v", i, g, wents)
 		}
 		var wunstable []pb.Entry
 		if tt.wunstable != nil {
@@ -670,7 +676,7 @@ func TestFollowerAppendEntries2AB(t *testing.T) {
 			wunstable = append(wunstable, *ent)
 		}
 		if g := r.RaftLog.unstableEntries(); !reflect.DeepEqual(g, wunstable) {
-			t.Errorf("#%d: unstableEnts = %+v, want %+v", i, g, wunstable)
+			t.Errorf("#%d: unstableEnts = %+v, \n\twant %+v", i, g, wunstable)
 		}
 	}
 }

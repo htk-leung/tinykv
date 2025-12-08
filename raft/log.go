@@ -96,15 +96,29 @@ func newLog(storage Storage) *RaftLog {
 	// entriesLastInd + 1 because ents[hi] is excluded from slice being returned
 	// only fetch entries if there are any
 	var entries []pb.Entry
-    if firstIndex <= lastIndex {
-        entries, err = storage.Entries(firstIndex-1, lastIndex+1)
+
+	if firstIndex <= lastIndex {
+        // get entries
+        storageEntries, err := storage.Entries(firstIndex, lastIndex+1)
         if err != nil {
             panic(err.Error())
         }
+		// fmt.Printf("now storageEntries has %d entries : %+v\n", len(storageEntries), storageEntries)
+        
+        // Get the term for the dummy entry 
+        dummyTerm, err := storage.Term(firstIndex - 1)
+        if err != nil {
+            dummyTerm = 0  // If we can't get it, use 0
+        }
+        
+        // Create entries with dummy entry at position 0
+        entries = make([]pb.Entry, 0, len(storageEntries)+1)
+        entries = append(entries, pb.Entry{Term: dummyTerm, Index: firstIndex - 1})
+        entries = append(entries, storageEntries...)
     } else {
+        // No entries in storage, just create dummy at index 0
         entries = []pb.Entry{{Term: 0, Index: 0}}
     }
-
 
 	return &RaftLog{
 		storage: 			storage, 			// storage contains all stable entries since the last snapshot.
@@ -130,24 +144,15 @@ func (l *RaftLog) maybeCompact() {
 func (l *RaftLog) allEntries() []pb.Entry {
 	// Your Code Here (2A).
 	
-	// create empty slice
-	ret := make([]pb.Entry, 0, len(l.entries))
-
-	// append to slice if data not empty
-	for _, entry := range l.entries {
-		if entry.Data != nil {
-			ret = append(ret, entry)
-		}
-	}
-	return ret
+	return l.entries[1:]
 }
 
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
 	// Your Code Here (2A).
 
-	ret := l.entries[l.stabled + 1 : ]
-	return ret
+	offset := l.entries[0].Index
+	return l.entries[l.stabled-offset+1 : ]
 }
 
 // nextEnts returns all the committed but not applied entries
@@ -169,16 +174,16 @@ func (l *RaftLog) LastIndex() uint64 {
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
 	// Your Code Here (2A).
+	
+	// get vars
+	offset := l.entries[0].Index
+    lastind := l.LastIndex()
+	// fmt.Printf("In l.Term : offset = %d lastind = %d for i = %d\n", offset, lastind, i)
 
-	lastind := l.LastIndex()
-	firstind, err := l.storage.FirstIndex()
-	if err != nil {
-		return 0, err
+	// return if within bounds
+	if i >= offset && i <= lastind {
+		return l.entries[i-offset].Term, nil
 	}
-
-	if i >= firstind && i <= lastind {
-		return l.entries[i].Term, nil
-	}
-
+	// out of bounds error
 	return 0, fmt.Errorf("Term(i): Index(%d) out of bounds of entries currently available in RaftLog", i)
 }
